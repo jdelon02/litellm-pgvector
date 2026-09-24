@@ -264,11 +264,14 @@ async def search_vector_store(
         """
         param_count += 2
         
-        # Add metadata filters if provided
+        # Apply project scope through the same parameterized metadata filters.
         filter_conditions = []
+        filters = dict(request.filters or {})
+        if request.project_id is not None:
+            filters["project_id"] = request.project_id
         
-        if request.filters:
-            for key, value in request.filters.items():
+        if filters:
+            for key, value in filters.items():
                 filter_conditions.append(f"{fields.metadata_field}->>${param_count} = ${param_count + 1}")
                 query_params.extend([key, str(value)])
                 param_count += 2
@@ -519,4 +522,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host=settings.host, port=settings.port, reload=True) 
+    uvicorn.run("main:app", host=settings.host, port=settings.port, reload=True)
