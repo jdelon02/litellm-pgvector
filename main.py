@@ -1,6 +1,7 @@
 import os
 import asyncio
 import time
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -45,6 +46,21 @@ app.add_middleware(
 db = Prisma()
 
 security = HTTPBearer()
+
+
+def optional_epoch_seconds(value):
+    """Normalize nullable Prisma raw-query dates to UTC Unix seconds.
+
+    Raw queries can return ISO strings instead of datetime objects. Prisma's
+    timezone-less database timestamps are interpreted as UTC, not server time.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return int(value.timestamp())
 
 
 async def get_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -108,8 +124,8 @@ async def create_vector_store(
         
         # Convert to response format
         created_at = int(vector_store["created_at_timestamp"])
-        expires_at = int(vector_store["expires_at"].timestamp()) if vector_store.get("expires_at") else None
-        last_active_at = int(vector_store["last_active_at"].timestamp()) if vector_store.get("last_active_at") else None
+        expires_at = optional_epoch_seconds(vector_store.get("expires_at"))
+        last_active_at = optional_epoch_seconds(vector_store.get("last_active_at"))
         
         return VectorStoreResponse(
             id=vector_store["id"],
@@ -183,8 +199,8 @@ async def list_vector_stores(
         vector_stores = []
         for row in results:
             created_at = int(row["created_at_timestamp"])
-            expires_at = int(row["expires_at"].timestamp()) if row.get("expires_at") else None
-            last_active_at = int(row["last_active_at"].timestamp()) if row.get("last_active_at") else None
+            expires_at = optional_epoch_seconds(row.get("expires_at"))
+            last_active_at = optional_epoch_seconds(row.get("last_active_at"))
             
             vector_store = VectorStoreResponse(
                 id=row["id"],
