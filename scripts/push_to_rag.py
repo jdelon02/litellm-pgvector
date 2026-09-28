@@ -381,8 +381,6 @@ def main(argv=None):
             raise ValueError('Replace primary_vector_store_id with primary_vector_store_name using the store name, not its ID')
         store_name = env.get('primary_vector_store_name', '')
         store = None
-        if not args.dry_run:
-            require_env(env, repo)
         stores = json.loads(env.get('vector_stores') or '[]')
         if not isinstance(stores, list) or any(not isinstance(s, str) or not s.strip() for s in stores):
             raise ValueError('vector_stores must be a JSON array of nonempty store names, or []')
@@ -398,6 +396,7 @@ def main(argv=None):
             check_staged_markdown(repo)
         settings = None
         if not args.dry_run:
+            require_env(env, repo)
             hermes = args.hermes_config
             if hermes is None:
                 hermes = Path.home() / '.hermes/config.yml'
