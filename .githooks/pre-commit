@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Unified Pre-Commit Hook: Graph Auto-Updates & OKF Validation
+# ==============================================================================
+
+set -e
+
+run_rag() {
+    local repo_root
+    repo_root="$(git rev-parse --show-toplevel)"
+    PYTHONDONTWRITEBYTECODE=1 python3 "$repo_root/scripts/push_to_rag.py" --repo "$repo_root" --hook
+}
+
+# Terminal formatting colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# ------------------------------------------------------------------------------
+# 1. code-review-graph Update & Brief Analysis
+# ------------------------------------------------------------------------------
+if command -v code-review-graph >/dev/null 2>&1; then
+    echo -e "${BLUE}==> Updating code-review-graph index...${NC}"
+    code-review-graph update || true
+    code-review-graph detect-changes --brief || true
+fi
+
+# ------------------------------------------------------------------------------
+# 2. OKF Documentation Schema Validation & Auto-Restaging
+# ------------------------------------------------------------------------------
+if ! command -v okf &> /dev/null; then
+    echo -e "${YELLOW}[WARN] 'okf' CLI is not installed or not in PATH. Skipping OKF check.${NC}"
+    run_rag
+    exit 0
+fi
+
+# Check if any files under docs/ are staged
+STAGED_DOCS=$(git diff --cached --name-only --diff-filter=ACM | grep '^docs/' || true)
+
+if [ -z "$STAGED_DOCS" ]; then
+    run_rag
+    exit 0
+fi
+
+echo -e "${BLUE}==> Staged changes detected in docs/ directory.${NC}"
+echo -e "${BLUE}==> Running OKF Lint ('okf lint docs/knowledge')...${NC}"
+
+# Capture docs status BEFORE running okf
+PRE_VALIDATE_HASH=$(git diff --stat docs/ | sha256sum 2>/dev/null || md5)
+
+# Execute okf lint (|| true so set -e doesn't kill the hook before we report)
+VALIDATION_OUTPUT=$(okf lint docs/knowledge 2>&1) && EXIT_CODE=0 || EXIT_CODE=$?
+
+# Capture docs status AFTER running okf
+POST_VALIDATE_HASH=$(git diff --stat docs/ | sha256sum 2>/dev/null || md5)
+
+if [ $EXIT_CODE -eq 0 ]; then
+    # Auto-restage if okf mutated index/metadata files on disk
+    if [ "$PRE_VALIDATE_HASH" != "$POST_VALIDATE_HASH" ]; then
+        echo -e "${YELLOW}==> okf updated metadata or index files on disk.${NC}"
+        echo -e "${YELLOW}==> Auto-restaging modified docs to keep commit in sync...${NC}"
+        git add docs/
+        echo -e "${GREEN}✔ Re-staged updated files under docs/.${NC}"
+    fi
+
+    echo -e "${GREEN}✔ OKF Validation Passed! Proceeding with commit.${NC}"
+    run_rag
+    exit 0
+
+else
+    echo -e "\n${RED}======================================================================${NC}"
+    echo -e "${RED} ❌ COMMIT BLOCKED: OKF Documentation Validation Failed${NC}"
+    echo -e "${RED}======================================================================${NC}\n"
+    
+    echo "$VALIDATION_OUTPUT"
+    
+    echo -e "\n${YELLOW}How to fix:${NC}"
+    echo -e " 1. Inspect missing XML tags or frontmatter properties reported above."
+    echo -e " 2. Compare against stubs in docs/specs/ or docs/plans/"
+    echo -e " 3. Re-run manual check: ${BLUE}okf lint -path docs/knowledge${NC}"
+    echo -e " 4. Stage fixes: ${BLUE}git add docs/${NC} and commit again.\n"
+    
+    exit 1
+fi

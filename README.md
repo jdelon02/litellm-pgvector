@@ -1,3 +1,11 @@
+---
+type: "project-instructions"
+title: "OpenAI Vector Stores API with PGVector"
+description: "Project instructions source for litellm-pgvector: README.md."
+tags: ["litellm-pgvector", "project"]
+source_path: "README.md"
+---
+
 # OpenAI Vector Stores API with PGVector
 
 A FastAPI application that provides OpenAI-compatible vector store endpoints using PGVector and LiteLLM proxy for embeddings.
