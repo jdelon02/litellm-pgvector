@@ -49,6 +49,28 @@ def read_env(path):
     return values
 
 
+ENV_TEMPLATE = '''  NANOGPT_API_KEY=<NanoGPT API key>                 # embedding requests
+  rag_base_url=<https://your-vector-store-host>     # OpenAI-compatible vector store API
+  rag_api_key=<vector store API key>
+  primary_vector_store_name=<store name, e.g. litellm_pgvector>'''
+
+
+def require_env(env, repo):
+    """Fail with copy-pasteable instructions when RAG configuration is missing."""
+    required = ('NANOGPT_API_KEY', 'rag_base_url', 'primary_vector_store_name')
+    missing = [key for key in required if not str(env.get(key, '')).strip()]
+    if not missing:
+        return
+    env_path = repo / '.env'
+    lines = ['Missing RAG configuration: ' + ', '.join(missing) + '.']
+    if not env_path.exists():
+        lines.append('No .env file found at ' + str(env_path) + '.')
+    lines.append('To fix, create ' + str(env_path) + ' containing:')
+    lines.append(ENV_TEMPLATE)
+    lines.append('(rag_api_key may instead come from Hermes model.api_key; every key may also be set as a process environment variable.)')
+    raise ValueError('\n'.join(lines))
+
+
 def resolve_value(value):
     value = str(value or '')
     match = re.fullmatch(r'\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)|env:([A-Za-z_]\w*)', value)
@@ -213,7 +235,7 @@ def embed_batch(texts, proxy_url, key, post=post_json):
             time.sleep(delay)
 
 
-def resolve_store_name(vector_url, key, name, get=request_json):
+def resolve_store_name(vector_url, key, name, get=request_json, post=post_json):
     root = vector_url.rstrip('/').removesuffix('/v1')
     result = get(root + '/v1/vector_stores?limit=100', key)
     if not isinstance(result.get('data'), list) or not isinstance(result.get('has_more'), bool):
@@ -226,7 +248,13 @@ def resolve_store_name(vector_url, key, name, get=request_json):
     if result['has_more']:
         raise ValueError('Vector-store listing is incomplete; name lookup requires at most 100 stores until backend pagination is fixed')
     if not matches:
-        raise ValueError('Vector-store name not found; create it first or check the configured name')
+        # Create the store automatically so a fresh repo needs no manual setup.
+        created = post(root + '/v1/vector_stores', key, {'name': name})
+        store_id = created.get('id')
+        if not isinstance(store_id, str) or not store_id:
+            raise ValueError('Vector-store creation did not return a valid ID')
+        print(f"Created vector store '{name}' ({store_id}).", flush=True)
+        return store_id
     store_id = matches[0].get('id')
     if not isinstance(store_id, str) or not store_id:
         raise ValueError('Vector-store listing returned an invalid ID')
@@ -353,9 +381,8 @@ def main(argv=None):
             raise ValueError('Replace primary_vector_store_id with primary_vector_store_name using the store name, not its ID')
         store_name = env.get('primary_vector_store_name', '')
         store = None
-        if args.hook and not store_name.strip():
-            print('RAG upload skipped: primary_vector_store_name is empty.')
-            return 0
+        if not args.dry_run:
+            require_env(env, repo)
         stores = json.loads(env.get('vector_stores') or '[]')
         if not isinstance(stores, list) or any(not isinstance(s, str) or not s.strip() for s in stores):
             raise ValueError('vector_stores must be a JSON array of nonempty store names, or []')
@@ -367,8 +394,6 @@ def main(argv=None):
             raise ValueError('Batch size must be an integer from 1 to 2048') from None
         if not 1 <= batch_size <= 2048:
             raise ValueError('Batch size must be an integer from 1 to 2048')
-        if not args.dry_run and not store_name.strip():
-            raise ValueError('Set primary_vector_store_name in .env before uploading')
         if args.hook:
             check_staged_markdown(repo)
         settings = None
