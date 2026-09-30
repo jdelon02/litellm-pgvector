@@ -99,10 +99,18 @@ curl -X POST \
 
 ## Configuration
 
-### Optional project-scoped search
+### Project-scoped search
 
-Both `/v1/vector_stores/{id}/search` and `/vector_stores/{id}/search` accept
-an optional top-level `project_id`:
+Every search against a vector store automatically filters by the store's name.
+If you search `/v1/vector_stores/delongpa_channel/search`, the backend filters
+to `metadata.project_id = 'delongpa_channel'`. The vector store name IS the
+project scope — no need to pass `project_id` explicitly.
+
+Store the project identifier in each embedding's `metadata.project_id` during
+ingestion (matching the vector store name). Records with missing or null
+`metadata.project_id` won't match any search. No database schema change needed.
+
+Optional explicit `project_id` is still supported for backwards compatibility:
 
 ```bash
 curl -X POST http://localhost:8000/v1/vector_stores/vs_abc123/search \
@@ -116,21 +124,8 @@ curl -X POST http://localhost:8000/v1/vector_stores/vs_abc123/search \
   }'
 ```
 
-Store the project identifier in each embedding's `metadata.project_id` during
-ingestion. A non-null search `project_id` adds an exact metadata equality filter,
-combined with other filters using AND, before ordering and limiting results.
-Records with missing or null `metadata.project_id` do not match a specified project.
-No database schema change is needed.
-
-- Omitted or `null` `project_id`: existing search behavior, including any supplied filters.
-- Empty or whitespace-only string: HTTP 422.
-- Conflicting top-level `project_id` and `filters.project_id`: HTTP 422.
-- Matching values in both locations: accepted and applied once.
-
-Nonempty identifiers are matched exactly; surrounding whitespace is not trimmed.
-Existing clients can continue using `filters.project_id`. A gateway must forward
-the new field to use the shorthand; this backend change alone does not change
-LiteLLM Proxy forwarding. Optional project filtering is not authorization.
+When provided, it must match the vector store name; conflicts return HTTP 422.
+Likewise, `filters.project_id` must match the vector store name.
 
 ### Project markers in search text
 
@@ -150,17 +145,15 @@ supported separator (comma, semicolon, question/exclamation mark, or brackets).
 
 Markers can appear anywhere in the query. They are removed before embedding;
 the response's `search_query` contains the cleaned query. Repeated identical
-markers are accepted. Conflicting markers, a conflict with explicit `project_id`
+markers are accepted. Conflicting markers, a conflict with the vector store name
 or `filters.project_id`, malformed/blank markers, and marker-only queries return
 HTTP 422 before database or embedding calls. Queries without a marker keep their
 existing behavior. Marker syntax is reserved even when discussing a literal
 example; this parser does not infer scope from ordinary prose.
 
-The backend sees the search request, not the original chat conversation. A chat
-app must forward the marker in `query` or send a structured `project_id`. Store
-names and project IDs are separate: selecting store `delongpa_channel` does not
-change metadata `project_id` on its documents. For example, this ingestion test's
-`scriptwriting` documents require `project_id: scriptwriting` in that store.
+A chat app must forward the marker in `query` or send a structured `project_id`.
+Each vector store should only contain content whose `metadata.project_id` matches
+the store name — otherwise searches will return fewer or no results.
 
 ### Search contract tests
 

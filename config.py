@@ -11,6 +11,7 @@ class DatabaseFieldConfig(BaseModel):
     embedding_field: str = "embedding"
     vector_store_id_field: str = "vector_store_id"
     created_at_field: str = "created_at"
+    project_id_field: str = "project_id"
 
 
 class EmbeddingConfig(BaseModel):
@@ -36,16 +37,17 @@ class Settings(BaseSettings):
     
     # Embedding configuration
     embedding: EmbeddingConfig = EmbeddingConfig()
-    
+
     class Config:
         env_file = ".env"
         env_nested_delimiter = "__"
         case_sensitive = False
-        
+
         # Allow environment variables like:
         # DB_FIELDS__ID_FIELD=custom_id
         # EMBEDDING__MODEL=text-embedding-3-small
         # EMBEDDING__API_BASE=https://api.openai.com/v1
+        # PROJECT_ID=my-project-name
         
     @property
     def table_names(self) -> Dict[str, str]:

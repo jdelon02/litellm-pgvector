@@ -244,6 +244,19 @@ async def search_vector_store(
     Search a vector store for similar content.
     """
     try:
+        # Validate: project_id from request/filters/marker must match vector_store_id BEFORE any DB work
+        effective_project_id = None
+        if request.project_id is not None:
+            effective_project_id = request.project_id
+        elif request.filters and "project_id" in request.filters:
+            effective_project_id = request.filters["project_id"]
+
+        if effective_project_id is not None and effective_project_id != vector_store_id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"project_id must match vector store name '{vector_store_id}'"
+            )
+
         # Check if vector store exists
         vector_store_table = settings.table_names["vector_stores"]
         vector_store_result = await db.query_raw(
@@ -252,46 +265,47 @@ async def search_vector_store(
         )
         if not vector_store_result:
             raise HTTPException(status_code=404, detail="Vector store not found")
-        
+
         # Generate embedding for query
         query_embedding = await generate_query_embedding(request.query)
         query_vector_str = "[" + ",".join(map(str, query_embedding)) + "]"
-        
+
         # Build the raw SQL query for vector similarity search
         limit = min(request.limit or 20, 100)  # Cap at 100 results
-        
-        # Base query with vector similarity using cosine distance
+
         # Use configurable field names
         fields = settings.db_fields
         table_name = settings.table_names["embeddings"]
-        
+
         # Build query with proper parameter placeholders for Prisma
         param_count = 1
         query_params = [query_vector_str, vector_store_id]
-        
+
         base_query = f"""
-        SELECT 
+        SELECT
             {fields.id_field},
             {fields.content_field},
             {fields.metadata_field},
             ({fields.embedding_field} <=> ${param_count}::vector) as distance
-        FROM {table_name} 
+        FROM {table_name}
         WHERE {fields.vector_store_id_field} = ${param_count + 1}
         """
         param_count += 2
-        
-        # Apply project scope through the same parameterized metadata filters.
-        filter_conditions = []
+
+        # Automatically filter by metadata.project_id = vector_store_id
+        # This ensures the vector store name IS the project scope
+        filter_conditions = [f"{fields.metadata_field}->>'{fields.project_id_field}' = ${param_count}"]
+        query_params.append(vector_store_id)
+        param_count += 1
+
+        # Apply additional filters (excluding project_id which we already validated)
         filters = dict(request.filters or {})
-        if request.project_id is not None:
-            filters["project_id"] = request.project_id
-        
-        if filters:
-            for key, value in filters.items():
-                filter_conditions.append(f"{fields.metadata_field}->>${param_count} = ${param_count + 1}")
-                query_params.extend([key, str(value)])
-                param_count += 2
-        
+        filters.pop("project_id", None)
+        for key, value in filters.items():
+            filter_conditions.append(f"{fields.metadata_field}->>${param_count} = ${param_count + 1}")
+            query_params.extend([key, str(value)])
+            param_count += 2
+
         if filter_conditions:
             base_query += " AND " + " AND ".join(filter_conditions)
         

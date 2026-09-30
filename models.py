@@ -71,7 +71,8 @@ class VectorStoreSearchRequest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_project_filter(self):
+    def parse_project_marker(self):
+        """Parse project markers from query; conflicts validated by caller."""
         query, marker_project = extract_project_marker(self.query)
         if marker_project is not None:
             if self.project_id is not None and self.project_id != marker_project:
