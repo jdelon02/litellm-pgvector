@@ -26,17 +26,23 @@ class Settings(BaseSettings):
     """Application settings"""
     # Database configuration
     database_url: str = "postgresql://username:password@localhost:5432/vectordb?schema=public"
-    
+
     # API configuration
     server_api_key: str = "your-api-key-here"
     port: int = 8000
     host: str = "0.0.0.0"
-    
+
     # Database field mappings
     db_fields: DatabaseFieldConfig = DatabaseFieldConfig()
-    
+
     # Embedding configuration
     embedding: EmbeddingConfig = EmbeddingConfig()
+
+    # Extra ingestion/sidecar vars (used by scripts, not the API service)
+    rag_base_url: Optional[str] = None
+    rag_api_key: Optional[str] = None
+    nanogpt_api_key: Optional[str] = None
+    project_id: Optional[str] = None
 
     class Config:
         env_file = ".env"

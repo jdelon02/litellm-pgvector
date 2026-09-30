@@ -244,27 +244,28 @@ async def search_vector_store(
     Search a vector store for similar content.
     """
     try:
-        # Validate: project_id from request/filters/marker must match vector_store_id BEFORE any DB work
+        # Check if vector store exists; its name is the project scope.
+        vector_store_table = settings.table_names["vector_stores"]
+        vector_store_result = await db.query_raw(
+            f"SELECT id, name FROM {vector_store_table} WHERE id = $1",
+            vector_store_id
+        )
+        if not vector_store_result:
+            raise HTTPException(status_code=404, detail="Vector store not found")
+        store_name = vector_store_result[0]["name"]
+
+        # Validate: project_id from request/filters/marker must match the store name BEFORE any embedding work
         effective_project_id = None
         if request.project_id is not None:
             effective_project_id = request.project_id
         elif request.filters and "project_id" in request.filters:
             effective_project_id = request.filters["project_id"]
 
-        if effective_project_id is not None and effective_project_id != vector_store_id:
+        if effective_project_id is not None and effective_project_id != store_name:
             raise HTTPException(
                 status_code=422,
-                detail=f"project_id must match vector store name '{vector_store_id}'"
+                detail=f"project_id must match vector store name '{store_name}'"
             )
-
-        # Check if vector store exists
-        vector_store_table = settings.table_names["vector_stores"]
-        vector_store_result = await db.query_raw(
-            f"SELECT id FROM {vector_store_table} WHERE id = $1",
-            vector_store_id
-        )
-        if not vector_store_result:
-            raise HTTPException(status_code=404, detail="Vector store not found")
 
         # Generate embedding for query
         query_embedding = await generate_query_embedding(request.query)
@@ -292,10 +293,10 @@ async def search_vector_store(
         """
         param_count += 2
 
-        # Automatically filter by metadata.project_id = vector_store_id
-        # This ensures the vector store name IS the project scope
+        # Automatically filter by metadata.project_id = the vector store name.
+        # This ensures the vector store name IS the project scope.
         filter_conditions = [f"{fields.metadata_field}->>'{fields.project_id_field}' = ${param_count}"]
-        query_params.append(vector_store_id)
+        query_params.append(store_name)
         param_count += 1
 
         # Apply additional filters (excluding project_id which we already validated)

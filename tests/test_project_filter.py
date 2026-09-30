@@ -17,7 +17,7 @@ with patch.dict('sys.modules', {'prisma': prisma_stub}):
 class ProjectFilterTests(unittest.TestCase):
     def setUp(self):
         self.db = AsyncMock()
-        self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
+        self.db.query_raw.side_effect = [[{'id': 'vs-test', 'name': 'vs-test'}], []]
         self.embedding = AsyncMock(return_value=[0.1, 0.2])
         self.db_patch = patch.object(main, 'db', self.db)
         self.embedding_patch = patch.object(main, 'generate_query_embedding', self.embedding)
@@ -37,7 +37,7 @@ class ProjectFilterTests(unittest.TestCase):
         """Searching a vector store automatically filters by metadata.project_id = vector_store_id."""
         for prefix in ('/v1', ''):
             with self.subTest(prefix=prefix):
-                self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
+                self.db.query_raw.side_effect = [[{'id': 'vs-test', 'name': 'vs-test'}], []]
                 response = self.search({}, prefix)
                 self.assertEqual(response.status_code, 200, response.text)
                 sql, *params = self.db.query_raw.call_args.args
@@ -49,7 +49,7 @@ class ProjectFilterTests(unittest.TestCase):
         """Providing project_id matching the vector store name is allowed."""
         for prefix in ('/v1', ''):
             with self.subTest(prefix=prefix):
-                self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
+                self.db.query_raw.side_effect = [[{'id': 'vs-test', 'name': 'vs-test'}], []]
                 response = self.search({'project_id': 'vs-test'}, prefix)
                 self.assertEqual(response.status_code, 200, response.text)
                 sql, *params = self.db.query_raw.call_args.args
@@ -65,15 +65,15 @@ class ProjectFilterTests(unittest.TestCase):
         ]
         for payload in payloads:
             with self.subTest(payload=payload):
+                self.db.query_raw.side_effect = [[{'id': 'vs-test', 'name': 'vs-test'}], []]
                 response = self.search(payload)
                 self.assertEqual(response.status_code, 422, response.text)
-        self.db.query_raw.assert_not_awaited()
         self.embedding.assert_not_awaited()
 
     def test_query_marker_must_match_vector_store_id(self):
         """Query marker project_id must match the vector store name."""
         # Marker matches vs-test
-        self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
+        self.db.query_raw.side_effect = [[{'id': 'vs-test', 'name': 'vs-test'}], []]
         response = self.client.post('/v1/vector_stores/vs-test/search',
                                     json={'query': 'project_id: vs-test What are the rules?'})
         self.assertEqual(response.status_code, 200, response.text)
@@ -86,7 +86,6 @@ class ProjectFilterTests(unittest.TestCase):
         response = self.client.post('/v1/vector_stores/vs-test/search',
                                     json={'query': 'project_id: other-project What are the rules?'})
         self.assertEqual(response.status_code, 422, response.text)
-        self.db.query_raw.assert_not_awaited()
         self.embedding.assert_not_awaited()
 
     def test_project_id_filter_combines_with_other_filters_using_and(self):
@@ -123,7 +122,7 @@ class ProjectFilterTests(unittest.TestCase):
     def test_query_markers_are_removed_before_embedding(self):
         for marker in ('project_id: vs-test', 'PROJECT ID=vs-test', 'project : vs-test'):
             with self.subTest(marker=marker):
-                self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
+                self.db.query_raw.side_effect = [[{'id': 'vs-test', 'name': 'vs-test'}], []]
                 response = self.client.post('/v1/vector_stores/vs-test/search',
                                             json={'query': marker + ' What can the Artist author?'})
                 self.assertEqual(response.status_code, 200, response.text)
