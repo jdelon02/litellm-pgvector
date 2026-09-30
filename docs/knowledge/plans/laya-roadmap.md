@@ -79,12 +79,7 @@ def classify_query(query: str) -> dict:
     })
 ```
 
-**Where it fits in the stack**:
-- **Option A — Proxy layer**: Add a classification middleware in the LiteLLM proxy that runs Laya on the query before forwarding to the vector store. This keeps the FastAPI backend unchanged.
-- **Option B — Backend endpoint**: Add a `/v1/vector_stores/{id}/classify-and-search` endpoint in `main.py` that runs Laya classification, applies inferred filters, then delegates to the existing search logic.
-- **Option C — Client-side**: Run Laya in the client application (chat UI, agent) and pass inferred `project_id` and filters to the existing search API.
-
-**Option B** is recommended for this project because it centralizes the logic, works with any client, and can fall back to unfiltered search when confidence is low.
+**Where it fits in the stack**: Extend `main.py` directly. The classification gate runs before the existing search logic in the `/v1/vector_stores/{id}/search` endpoint. When a query arrives, Laya classifies it first, then the inferred `project_id` and intent filters are applied to the PGVector query. This keeps the architecture simple — one service, one codebase, no extra proxy or middleware layer.
 
 ### Effort Estimate
 
