@@ -113,7 +113,7 @@ source_path: "AGENTS.md"
 - Preserve OpenAI Vector Stores API compatibility: request/response shapes, `object` values, and error semantics are contract. Additions must be backwards-compatible.
 - Preserve the project-scoping contract: `project_id` (top-level, `filters.project_id`, or in-query markers) with its documented 422 conflict/blank rules. Optional project filtering is not authorization.
 - Never commit secrets. `.env` holds `DATABASE_URL`, `SERVER_API_KEY`, and `EMBEDDING__API_KEY`; it stays untracked.
-- Working in a worktree or fresh clone: copy `.env` from the primary checkout (currently `/Users/jdelon02/Projects/agentic_related/litellm-pgvector/.env`) into the working directory before committing. The pre-commit RAG step (`scripts/push_to_rag.py --hook`) needs `rag_base_url`, `rag_api_key`, `NANOGPT_API_KEY`, and `primary_vector_store_name`; without them the hook blocks every commit.
+- Working in a worktree or fresh clone: copy `.env` from the primary checkout (currently `/Users/jdelon02/Projects/agentic_related/litellm-pgvector/.env`) into the working directory before committing. The pre-commit RAG step (`scripts/push_to_rag.py --hook`) needs `rag_base_url`, `rag_api_key`, `NANOGPT_API_KEY`, and `PROJECT_ID`; without them the hook blocks every commit. `PROJECT_ID` is the content boundary — it stamps `metadata.project_id` on ingested chunks and is the vector store name (created if missing on commit).
 - Keep tests hermetic: contract tests must not require a generated Prisma client or live DB/LiteLLM services.
 - Do not change database field semantics without going through `DB_FIELDS__*` config and updating README + tests together.
 - Schema changes go through `prisma/` and `prisma db push`/migrations, never ad hoc SQL in code.
