@@ -362,6 +362,26 @@ def prepare_commit_bundle(repo):
         print(f'Staged {len(changed)} refreshed OKF indexes for this commit.', flush=True)
 
 
+def stage_rag_state(repo, before_snapshot):
+    """Stage .rag/*.json state files that changed during upload, mirroring the okf pattern."""
+    repo = repo.resolve()
+    rag_dir = repo / '.rag'
+    changed = []
+    for path in sorted(rag_dir.glob('*.json')):
+        after = path.read_bytes() if path.exists() else None
+        if before_snapshot.get(path) == after:
+            continue
+        relative = path.relative_to(repo).as_posix()
+        ignored = subprocess.run(['git', '-C', str(repo), 'check-ignore', '--quiet', '--', relative])
+        if ignored.returncode not in (0, 1):
+            raise ValueError('Could not determine which .rag state files are Git-ignored')
+        if ignored.returncode == 1:
+            changed.append(relative)
+    if changed:
+        subprocess.run(['git', '-C', str(repo), 'add', '--', *changed], check=True)
+        print(f'Staged {len(changed)} RAG state files for this commit.', flush=True)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parent.parent)
@@ -413,8 +433,12 @@ def main(argv=None):
         proxy_url, proxy_key, vector_url, vector_key = settings
         target = digest([vector_url, store, proxy_url, MODEL, DIMENSIONS])
         state_path = repo / '.rag' / (target + '.json')
+        rag_dir = repo / '.rag'
+        before_snapshot = {p: p.read_bytes() for p in rag_dir.glob('*.json')} if rag_dir.is_dir() else {}
         with upload_lock(repo / '.rag/upload.lock'):
             count = upload_chunks(chunks, state_path, *settings, store, batch_size=batch_size)
+        if args.hook:
+            stage_rag_state(repo, before_snapshot)
         print(f'Complete: {count} new chunks uploaded; {len(chunks) - count} already confirmed locally.')
         return 0
     except (ValueError, OSError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
