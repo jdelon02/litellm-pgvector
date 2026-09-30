@@ -59,6 +59,7 @@ source_path: "MEMORY.md"
 
 - `.env` holds `DATABASE_URL`, `SERVER_API_KEY`, and `EMBEDDING__API_KEY`; it is untracked and must stay that way.
 - The LiteLLM proxy and Postgres are external services; this repo assumes they exist but never manages their credentials beyond `.env`.
+- **For agents working in a worktree or cloned repo**: Copy the `.env` file from the main litellm-pgvector project to your worktree before running `push_to_rag.py` or any RAG-related tasks. The `.env` file contains the vector store credentials needed for the pre-commit hook's RAG ingestion step to succeed.
 
 </secrets>
 
