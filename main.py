@@ -144,6 +144,65 @@ async def create_vector_store(
         raise HTTPException(status_code=500, detail=f"Failed to create vector store: {str(e)}")
 
 
+@app.delete("/v1/vector_stores/{vector_store_id}", response_model=VectorStoreResponse)
+async def delete_vector_store(
+    vector_store_id: str,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    Delete a vector store and all its embeddings (cascading).
+    """
+    try:
+        vector_store_table = settings.table_names["vector_stores"]
+
+        # Get the vector store to return in response before deleting
+        result = await db.query_raw(
+            f"""
+            SELECT id, name, file_counts, status, usage_bytes, expires_after, expires_at, last_active_at, metadata,
+                   EXTRACT(EPOCH FROM created_at)::bigint as created_at_timestamp
+            FROM {vector_store_table}
+            WHERE id = $1
+            """,
+            vector_store_id
+        )
+
+        if not result:
+            raise HTTPException(status_code=404, detail="Vector store not found")
+
+        # Delete the vector store (cascades to embeddings due to onDelete: Cascade)
+        delete_result = await db.execute(
+            f"DELETE FROM {vector_store_table} WHERE id = $1 RETURNING id",
+            vector_store_id
+        )
+
+        if not delete_result:
+            raise HTTPException(status_code=500, detail="Failed to delete vector store")
+
+        # Build response from the original query result
+        vector_store = result[0]
+        created_at = int(vector_store["created_at_timestamp"])
+        expires_at = optional_epoch_seconds(vector_store.get("expires_at"))
+        last_active_at = optional_epoch_seconds(vector_store.get("last_active_at"))
+
+        return VectorStoreResponse(
+            id=vector_store["id"],
+            created_at=created_at,
+            name=vector_store["name"],
+            usage_bytes=vector_store["usage_bytes"] or 0,
+            file_counts=vector_store["file_counts"] or {},
+            status=vector_store["status"],
+            expires_after=vector_store["expires_after"],
+            expires_at=expires_at,
+            last_active_at=last_active_at,
+            metadata=vector_store["metadata"]
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete vector store: {str(e)}")
+
+
 @app.get("/v1/vector_stores", response_model=VectorStoreListResponse)
 async def list_vector_stores(
     limit: Optional[int] = 20,
@@ -337,6 +396,17 @@ async def search_vector_store(
                 content=content_chunks
             )
             search_results.append(result)
+
+        # Deduplicate results by content hash (for cases where same content was indexed multiple times)
+        seen_content: set[str] = set()
+        unique_results: list[SearchResult] = []
+        for r in search_results:
+            content_text = r.content[0].text if r.content else ""
+            content_hash = hash(content_text)
+            if content_hash not in seen_content:
+                seen_content.add(content_hash)
+                unique_results.append(r)
+        search_results = unique_results
         
         return VectorStoreSearchResponse(
             search_query=request.query,
