@@ -33,62 +33,80 @@ class ProjectFilterTests(unittest.TestCase):
     def search(self, payload, prefix='/v1'):
         return self.client.post(prefix + '/vector_stores/vs-test/search', json=dict(query='rules', **payload))
 
-    def test_project_filter_is_parameterized_on_both_routes(self):
+    def test_search_filters_by_vector_store_id_as_project_id(self):
+        """Searching a vector store automatically filters by metadata.project_id = vector_store_id."""
         for prefix in ('/v1', ''):
             with self.subTest(prefix=prefix):
                 self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
-                project = "project' OR 1=1 --"
-                response = self.search({'project_id': project}, prefix)
+                response = self.search({}, prefix)
                 self.assertEqual(response.status_code, 200, response.text)
                 sql, *params = self.db.query_raw.call_args.args
-                self.assertIn('metadata->>$3 = $4', sql)
-                self.assertNotIn(project, sql)
-                self.assertEqual(params, ['[0.1,0.2]', 'vs-test', 'project_id', project])
+                self.assertIn('metadata->>\'project_id\' = $3', sql)
+                self.assertEqual(params, ['[0.1,0.2]', 'vs-test', 'vs-test'])
                 self.assertEqual(response.json()['data'], [])
 
-    def test_omitted_or_null_project_preserves_legacy_filters(self):
-        for payload in ({}, {'project_id': None}):
-            with self.subTest(payload=payload):
+    def test_matching_project_id_is_allowed(self):
+        """Providing project_id matching the vector store name is allowed."""
+        for prefix in ('/v1', ''):
+            with self.subTest(prefix=prefix):
                 self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
-                response = self.search(dict(payload, filters={'category': 'support'}))
-                self.assertEqual(response.status_code, 200)
+                response = self.search({'project_id': 'vs-test'}, prefix)
+                self.assertEqual(response.status_code, 200, response.text)
                 sql, *params = self.db.query_raw.call_args.args
-                self.assertEqual(params, ['[0.1,0.2]', 'vs-test', 'category', 'support'])
-                self.assertNotIn('project_id', sql)
+                self.assertIn('metadata->>\'project_id\' = $3', sql)
+                self.assertEqual(params, ['[0.1,0.2]', 'vs-test', 'vs-test'])
 
-    def test_omitted_and_null_without_filters_add_no_restriction(self):
-        for payload in ({}, {'project_id': None}):
-            self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
-            response = self.search(payload)
-            self.assertEqual(response.status_code, 200)
-            sql, *params = self.db.query_raw.call_args.args
-            self.assertNotIn('->>', sql)
-            self.assertEqual(params, ['[0.1,0.2]', 'vs-test'])
+    def test_mismatched_project_id_returns_422(self):
+        """Providing project_id NOT matching the vector store name returns 422."""
+        payloads = [
+            {'project_id': 'other-project'},
+            {'filters': {'project_id': 'other-project'}},
+            {'project_id': 'vs-test', 'filters': {'project_id': 'other-project'}},  # conflict via filter
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                response = self.search(payload)
+                self.assertEqual(response.status_code, 422, response.text)
+        self.db.query_raw.assert_not_awaited()
+        self.embedding.assert_not_awaited()
 
-    def test_project_combines_with_other_filters_using_and(self):
-        response = self.search({'project_id': 'scriptwriting', 'filters': {'category': 'rules'}})
+    def test_query_marker_must_match_vector_store_id(self):
+        """Query marker project_id must match the vector store name."""
+        # Marker matches vs-test
+        self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
+        response = self.client.post('/v1/vector_stores/vs-test/search',
+                                    json={'query': 'project_id: vs-test What are the rules?'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.embedding.assert_awaited_with('What are the rules?')
+        sql, *params = self.db.query_raw.call_args.args
+        self.assertEqual(params, ['[0.1,0.2]', 'vs-test', 'vs-test'])
+
+    def test_query_marker_mismatch_returns_422(self):
+        """Query marker project_id NOT matching returns 422."""
+        response = self.client.post('/v1/vector_stores/vs-test/search',
+                                    json={'query': 'project_id: other-project What are the rules?'})
+        self.assertEqual(response.status_code, 422, response.text)
+        self.db.query_raw.assert_not_awaited()
+        self.embedding.assert_not_awaited()
+
+    def test_project_id_filter_combines_with_other_filters_using_and(self):
+        response = self.search({'filters': {'category': 'rules'}})
         self.assertEqual(response.status_code, 200)
         sql, *params = self.db.query_raw.call_args.args
-        self.assertIn('metadata->>$3 = $4 AND metadata->>$5 = $6', sql)
-        self.assertEqual(params, ['[0.1,0.2]', 'vs-test', 'category', 'rules', 'project_id', 'scriptwriting'])
+        self.assertIn('metadata->>\'project_id\' = $3 AND metadata->>$4 = $5', sql)
+        self.assertEqual(params, ['[0.1,0.2]', 'vs-test', 'vs-test', 'category', 'rules'])
 
-    def test_matching_legacy_project_filter_is_applied_once(self):
-        response = self.search({'project_id': 'scriptwriting', 'filters': {'project_id': 'scriptwriting'}})
-        self.assertEqual(response.status_code, 200)
-        sql, *params = self.db.query_raw.call_args.args
-        self.assertEqual(sql.count('->>'), 1)
-        self.assertEqual(params[-2:], ['project_id', 'scriptwriting'])
-
-    def test_project_filter_uses_configured_metadata_column(self):
+    def test_project_id_uses_configured_metadata_and_project_id_columns(self):
         with patch.object(main.settings.db_fields, 'metadata_field', 'document_metadata'):
-            response = self.search({'project_id': 'scriptwriting', 'return_metadata': False})
+            with patch.object(main.settings.db_fields, 'project_id_field', 'proj_id'):
+                response = self.search({'return_metadata': False})
         self.assertEqual(response.status_code, 200)
         sql = self.db.query_raw.call_args.args[0]
-        self.assertIn('document_metadata->>$3 = $4', sql)
+        self.assertIn('document_metadata->>\'proj_id\' = $3', sql)
+        self.assertEqual(list(self.db.query_raw.call_args.args[1:]), ['[0.1,0.2]', 'vs-test', 'vs-test'])
 
     def test_invalid_project_returns_422_before_backend_work(self):
         payloads = [{'project_id': value} for value in ('', ' \t\n', 123, [], {})]
-        payloads += [{'project_id': 'one', 'filters': {'project_id': value}} for value in ('two', None, 123)]
         for payload in payloads:
             with self.subTest(payload=payload):
                 response = self.search(payload)
@@ -98,28 +116,26 @@ class ProjectFilterTests(unittest.TestCase):
 
     def test_request_does_not_mutate_callers_filter_dictionary(self):
         filters = {'category': 'rules'}
-        parsed = VectorStoreSearchRequest(query='rules', project_id='scriptwriting', filters=filters)
-        self.assertEqual(parsed.project_id, 'scriptwriting')
+        parsed = VectorStoreSearchRequest(query='rules', project_id='vs-test', filters=filters)
+        self.assertEqual(parsed.project_id, 'vs-test')
         self.assertEqual(filters, {'category': 'rules'})
 
-    def test_query_markers_filter_both_routes_and_are_removed_before_embedding(self):
-        for prefix in ('/v1', ''):
-            for marker in ('project_id: scriptwriting', 'PROJECT ID=scriptwriting', 'project : scriptwriting'):
-                with self.subTest(prefix=prefix, marker=marker):
-                    self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
-                    response = self.client.post(prefix + '/vector_stores/vs-test/search',
-                                                json={'query': marker + ' What can the Artist author?'})
-                    self.assertEqual(response.status_code, 200, response.text)
-                    self.embedding.assert_awaited_with('What can the Artist author?')
-                    self.assertEqual(response.json()['search_query'], 'What can the Artist author?')
-                    self.assertEqual(self.db.query_raw.call_args.args[-2:], ('project_id', 'scriptwriting'))
+    def test_query_markers_are_removed_before_embedding(self):
+        for marker in ('project_id: vs-test', 'PROJECT ID=vs-test', 'project : vs-test'):
+            with self.subTest(marker=marker):
+                self.db.query_raw.side_effect = [[{'id': 'vs-test'}], []]
+                response = self.client.post('/v1/vector_stores/vs-test/search',
+                                            json={'query': marker + ' What can the Artist author?'})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.embedding.assert_awaited_with('What can the Artist author?')
+                self.assertEqual(response.json()['search_query'], 'What can the Artist author?')
 
     def test_markers_support_repetition_quoted_names_and_end_position(self):
         cases = [
-            ('find rules project_id: scriptwriting', 'scriptwriting', 'find rules'),
-            ('project: scriptwriting find project ID=scriptwriting rules', 'scriptwriting', 'find rules'),
-            ('project: "My Project" find rules', 'My Project', 'find rules'),
-            ("project_id='My Project' find rules", 'My Project', 'find rules'),
+            ('find rules project_id: vs-test', 'vs-test', 'find rules'),
+            ('project: vs-test find project ID=vs-test rules', 'vs-test', 'find rules'),
+            ('project: "vs-test" find rules', 'vs-test', 'find rules'),
+            ("project_id='vs-test' find rules", 'vs-test', 'find rules'),
         ]
         for query, project, clean in cases:
             with self.subTest(query=query):
@@ -130,9 +146,7 @@ class ProjectFilterTests(unittest.TestCase):
     def test_bad_or_conflicting_markers_fail_before_backend_work(self):
         cases = [
             {'query': 'project: one project_id: two find rules'},
-            {'query': 'project: one find rules', 'project_id': 'two'},
-            {'query': 'project: one find rules', 'filters': {'project_id': 'two'}},
-            {'query': 'find rules project_id:'},
+            {'query': 'project_id:', 'project_id': 'vs-test'},
             {'query': 'project: "" find rules'},
             {'query': 'project: "unclosed find rules'},
             {'query': 'project: one'},
@@ -151,12 +165,6 @@ class ProjectFilterTests(unittest.TestCase):
             parsed = VectorStoreSearchRequest(query=query)
             self.assertEqual(parsed.query, query)
             self.assertIsNone(parsed.project_id)
-
-    def test_matching_marker_and_explicit_filters_are_allowed(self):
-        parsed = VectorStoreSearchRequest(query='project: scriptwriting rules',
-                                          project_id='scriptwriting', filters={'project_id': 'scriptwriting'})
-        self.assertEqual(parsed.query, 'rules')
-        self.assertEqual(parsed.project_id, 'scriptwriting')
 
 
 if __name__ == '__main__':
