@@ -170,7 +170,7 @@ async def delete_vector_store(
             raise HTTPException(status_code=404, detail="Vector store not found")
 
         # Delete the vector store (cascades to embeddings due to onDelete: Cascade)
-        delete_result = await db.execute(
+        delete_result = await db.query_raw(
             f"DELETE FROM {vector_store_table} WHERE id = $1 RETURNING id",
             vector_store_id
         )
