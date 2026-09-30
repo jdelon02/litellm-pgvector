@@ -8,5 +8,6 @@ Bundle root.
 
 ## Subdirectories
 
+- [plans/](plans/index.md)
 - [repository/](repository/index.md)
 
