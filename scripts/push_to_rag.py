@@ -52,12 +52,12 @@ def read_env(path):
 ENV_TEMPLATE = '''  NANOGPT_API_KEY=<NanoGPT API key>                 # embedding requests
   rag_base_url=<https://your-vector-store-host>     # OpenAI-compatible vector store API
   rag_api_key=<vector store API key>
-  primary_vector_store_name=<store name, e.g. litellm_pgvector>'''
+  PROJECT_ID=<project id, e.g. litellm_pgvector>    # also the vector store name'''
 
 
 def require_env(env, repo):
     """Fail with copy-pasteable instructions when RAG configuration is missing."""
-    required = ('NANOGPT_API_KEY', 'rag_base_url', 'primary_vector_store_name')
+    required = ('NANOGPT_API_KEY', 'rag_base_url', 'PROJECT_ID')
     missing = [key for key in required if not str(env.get(key, '')).strip()]
     if not missing:
         return
@@ -159,7 +159,7 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def collect_chunks(repo, max_chars):
+def collect_chunks(repo, project_id, max_chars):
     repo = repo.resolve()
     bundle = repo / BUNDLE
     concepts = command_json(['okf', 'list', str(bundle)])['concepts']
@@ -170,7 +170,7 @@ def collect_chunks(repo, max_chars):
         if not path.is_relative_to(bundle.resolve()):
             raise ValueError('OKF concept path leaves the knowledge bundle')
         metadata = {k: concept[k] for k in ('title', 'type', 'tags', 'status', 'trust_tier', 'stale') if k in concept}
-        metadata.update({'project_id': repo.name, 'concept_id': concept['id'],
+        metadata.update({'project_id': project_id, 'concept_id': concept['id'],
                          'filename': path.name, 'source_path': path.relative_to(repo).as_posix(),
                          'source_tool': 'okf', 'embedding_model': MODEL})
         for index, chunk in enumerate(chunk_text(concept['body'], max_chars)):
@@ -374,16 +374,15 @@ def main(argv=None):
     try:
         repo = args.repo.resolve()
         env = read_env(repo / '.env')
-        for key in ('primary_vector_store_name', 'primary_vector_store_id', 'vector_stores', 'rag_base_url', 'rag_api_key', 'rag_batch_size', 'NANOGPT_API_KEY'):
+        for key in ('PROJECT_ID', 'primary_vector_store_name', 'primary_vector_store_id', 'rag_base_url', 'rag_api_key', 'rag_batch_size', 'NANOGPT_API_KEY'):
             if key in os.environ:
                 env[key] = os.environ[key]
+        if env.get('primary_vector_store_name', '').strip():
+            env.setdefault('PROJECT_ID', env['primary_vector_store_name'])
         if env.get('primary_vector_store_id', '').strip():
-            raise ValueError('Replace primary_vector_store_id with primary_vector_store_name using the store name, not its ID')
-        store_name = env.get('primary_vector_store_name', '')
+            raise ValueError('Replace primary_vector_store_id with PROJECT_ID using the store name, not its ID')
+        project_id = env.get('PROJECT_ID', '')
         store = None
-        stores = json.loads(env.get('vector_stores') or '[]')
-        if not isinstance(stores, list) or any(not isinstance(s, str) or not s.strip() for s in stores):
-            raise ValueError('vector_stores must be a JSON array of nonempty store names, or []')
         if args.chunk_chars < 100:
             raise ValueError('--chunk-chars must be at least 100')
         try:
@@ -403,10 +402,10 @@ def main(argv=None):
                 if not hermes.exists():
                     hermes = Path.home() / '.hermes/config.yaml'
             settings = connection_settings(env, hermes)
-            store = resolve_store_name(settings[2], settings[3], store_name)
+            store = resolve_store_name(settings[2], settings[3], project_id)
         if args.hook and not args.dry_run:
             prepare_commit_bundle(repo)
-        chunks = collect_chunks(repo, args.chunk_chars)
+        chunks = collect_chunks(repo, project_id, args.chunk_chars)
         print(f'OKF: {len({c["metadata"]["concept_id"] for c in chunks})} documents, {len(chunks)} chunks; model {MODEL}, {DIMENSIONS} dimensions.')
         if args.dry_run:
             print('Dry run: no embeddings requested or documents uploaded.')

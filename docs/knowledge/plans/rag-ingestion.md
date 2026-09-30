@@ -32,7 +32,7 @@ Each chunk carries rich provenance information:
 
 ```python
 {
-    "project_id": str,           # Repository name for scoping
+    "project_id": str,           # PROJECT_ID env var (content boundary)
     "concept_id": str,           # OKF concept identifier
     "filename": str,             # Source file name
     "source_path": str,          # Path relative to repo root
@@ -62,7 +62,7 @@ Required environment variables in `.env`:
 NANOGPT_API_KEY=<API key for embedding requests>
 rag_base_url=https://your-vector-store-host
 rag_api_key=<vector store API key>
-primary_vector_store_name=<store name, e.g. litellm_pgvector>
+PROJECT_ID=<project id, e.g. litellm_pgvector>      # also the vector store name
 rag_batch_size=16                      # Optional, default 16
 ```
 
@@ -171,7 +171,7 @@ RAG_DEBUG=true python3 scripts/push_to_rag.py
 |---------|-------|-----|
 | `Missing RAG configuration` | `.env` not created or incomplete | Create `.env` following template in error message |
 | `Another RAG upload is already running` | Previous process holds lock file | Verify no stuck process; remove `.rag/upload.lock` if safe |
-| `Vector-store listing is incomplete` | More than 100 stores configured | Consolidate stores or use exact `primary_vector_store_name` |
+| `Vector-store listing is incomplete` | More than 100 stores configured | Consolidate stores or use exact `PROJECT_ID` |
 | `Stage or stash Markdown changes` | Working tree has unstaged `.md` edits | `git add` or `git stash` before running |
 | Empty search results | Documents ingested without matching `project_id` | Verify `metadata.project_id` was stamped during ingestion |
 
